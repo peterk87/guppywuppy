@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 from pathlib import Path
 from typing import AsyncIterable
+from databases import Database
 
 import httpx
 from pyguppyclient import GuppyAsyncClientBase, yield_reads
@@ -62,6 +63,18 @@ app.config.from_object(guppywuppy.default_settings)
 app.config.load_environment_vars('GUPPYWUPPY_')
 
 
+def setup_database():
+    app.db = Database(app.config.DB_URL)
+
+    @app.listener('after_server_start')
+    async def connect_to_db(*args, **kwargs):
+        await app.db.connect()
+
+    @app.listener('after_server_stop')
+    async def disconnect_from_db(*args, **kwargs):
+        await app.db.disconnect()
+
+
 @app.route('/')
 async def root(request: Request) -> HTTPResponse:
     logger.info(request.host)
@@ -75,22 +88,21 @@ async def root(request: Request) -> HTTPResponse:
 
 @app.route("/fast5")
 async def test(request: Request) -> HTTPResponse:
-    host = '127.0.0.1'
-    port = 3000
+    host: str = app.config.FAST5WATCH_HOST
+    port: int = app.config.FAST5WATCH_PORT
+    retries: int = app.config.FAST5_DL_RETRIES or 3
+    outdir: str = app.config.OUTDIR or '/tmp/guppywuppy'
     args = request.args
-    logger.info(f'remote={request.remote_addr}')
-    logger.info(f'args={args}')
-    retries = 3
+    logger.debug(f'args={args}')
     f5id = args.get('id', [''])
-    logger.info(f'FAST5 id={f5id}')
-
+    logger.debug(f'FAST5 id={f5id}')
     try:
         f5id = int(f5id)
     except ValueError:
         return json({'error': f'Must provide valid integer id for FAST5. Provided id="{f5id}"'},
                     status=400)
 
-    base_outdir = Path('/tmp/guppywuppy')
+    base_outdir = Path(outdir)
     base_outdir.mkdir(parents=True, exist_ok=True)
     logger.info(f'Getting FAST5 data for id={f5id} from {host}:{port}')
     f5_data = await get_f5_data(f5id, host, port)

@@ -37,7 +37,7 @@ async def basecall_fast5(f5_path: str,
             done += 1
             read, called = res
             samples += read.total_samples - called.trimmed_samples
-            yield f'@{read.read_id}\n{called.seq}\n+\n{called.qual}'
+            yield f'@{read.read_id}\n{called.seq}\n+\n{called.qual}\n'
 
 
 def sha256_binary_file(path, buffer=1024 ** 2) -> str:

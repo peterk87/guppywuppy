@@ -12,7 +12,8 @@ with open('HISTORY.rst') as history_file:
 
 requirements = ['Click>=7.0',
                 'pyguppyclient',
-                'falcon', 'httpx', 'sanic', 'databases']
+                'sanic',
+                'databases']
 
 setup_requirements = ['pytest-runner', ]
 

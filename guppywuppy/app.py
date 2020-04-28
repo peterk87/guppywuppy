@@ -5,9 +5,13 @@ import tempfile
 from pathlib import Path
 from typing import AsyncIterable
 from databases import Database
+from datetime import datetime
+from dateutil import parser as dp
 
 import httpx
 from pyguppyclient import GuppyAsyncClientBase, yield_reads
+from ont_fast5_api.fast5_interface import get_fast5_file
+import h5py
 from sanic import Sanic
 from sanic.log import logger
 from sanic.request import Request
@@ -30,6 +34,8 @@ async def basecall_fast5(f5_path: str,
         logger.info(f'Passed all {n_reads} reads from "{f5_path}" to Guppy at {host}:{port}')
         done = 0
         samples = 0
+        f5info = get_fast5_file(f5_path)
+        handle = h5py.File(f5_path, 'r')
         while done < n_reads:
             res = await client.get_called_read()
             if res is None:
@@ -37,8 +43,20 @@ async def basecall_fast5(f5_path: str,
             done += 1
             read, called = res
             samples += read.total_samples - called.trimmed_samples
-            yield f'@{read.read_id}\n{called.seq}\n+\n{called.qual}\n'
+            f5read = f5info.get_read(read.read_id)
+            sample_frequency = int(f5read.get_context_tags()['sample_frequency'])
+            runid = f5read.get_run_id().decode()
+            channel = f5read.get_channel_info()['channel_number']
+            sample_id = f5read.get_tracking_id()['sample_id']
+            flow_cell_id = f5read.get_tracking_id()['flow_cell_id']
+            h5_read = handle[f'read_{read.read_id}']
 
+            read_number = h5_read['Raw'].attrs['read_number'] 
+            start_time = start_time = h5_read['Raw'].attrs['start_time']
+            dt = dp.parse(f5read.get_tracking_id()['exp_start_time'])
+            start_time = datetime.fromtimestamp(dt.timestamp() + start_time/sample_frequency).isoformat()
+            yield f'@{read.read_id} runid={runid} read={read_number} ch={channel} start_time={start_time} flow_cell_id={flow_cell_id} protocol_group_id={sample_id} sample_id={sample_id}\n{called.seq}\n+\n{called.qual}\n'
+        handle.close()
 
 def sha256_binary_file(path, buffer=1024 ** 2) -> str:
     sha256 = hashlib.sha256()

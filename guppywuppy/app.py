@@ -2,16 +2,16 @@
 
 import hashlib
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterable
-from databases import Database
-from datetime import datetime
-from dateutil import parser as dp
 
-import httpx
-from pyguppyclient import GuppyAsyncClientBase, yield_reads
-from ont_fast5_api.fast5_interface import get_fast5_file
 import h5py
+import httpx
+from databases import Database
+from dateutil import parser as dp
+from ont_fast5_api.fast5_interface import get_fast5_file
+from pyguppyclient import GuppyAsyncClientBase, yield_reads
 from sanic import Sanic
 from sanic.log import logger
 from sanic.request import Request
@@ -47,16 +47,24 @@ async def basecall_fast5(f5_path: str,
             sample_frequency = int(f5read.get_context_tags()['sample_frequency'])
             runid = f5read.get_run_id().decode()
             channel = f5read.get_channel_info()['channel_number']
-            sample_id = f5read.get_tracking_id()['sample_id']
-            flow_cell_id = f5read.get_tracking_id()['flow_cell_id']
+            tracking_id = f5read.get_tracking_id()
+            sample_id = tracking_id['sample_id']
+            flow_cell_id = tracking_id['flow_cell_id']
             h5_read = handle[f'read_{read.read_id}']
-
-            read_number = h5_read['Raw'].attrs['read_number'] 
-            start_time = start_time = h5_read['Raw'].attrs['start_time']
-            dt = dp.parse(f5read.get_tracking_id()['exp_start_time'])
-            start_time = datetime.fromtimestamp(dt.timestamp() + start_time/sample_frequency).isoformat()
-            yield f'@{read.read_id} runid={runid} read={read_number} ch={channel} start_time={start_time} flow_cell_id={flow_cell_id} protocol_group_id={sample_id} sample_id={sample_id}\n{called.seq}\n+\n{called.qual}\n'
+            read_number = h5_read['Raw'].attrs['read_number']
+            start_time = h5_read['Raw'].attrs['start_time']
+            dt = dp.parse(tracking_id['exp_start_time'])
+            start_time = datetime.fromtimestamp(dt.timestamp() + start_time / sample_frequency).isoformat()
+            yield (f'@{read.read_id}'
+                   f' runid={runid}'
+                   f' read={read_number}'
+                   f' ch={channel}'
+                   f' start_time={start_time}'
+                   f' flow_cell_id={flow_cell_id}'
+                   f' protocol_group_id={sample_id}'
+                   f' sample_id={sample_id}\n{called.seq}\n+\n{called.qual}\n')
         handle.close()
+
 
 def sha256_binary_file(path, buffer=1024 ** 2) -> str:
     sha256 = hashlib.sha256()
@@ -153,17 +161,21 @@ async def test(request: Request) -> HTTPResponse:
                                       f'SHA256 was "{f5_sha256}"; expected "{expected_sha256}"'},
                             status=500)
 
-        fq_path = base_outdir / f'{f5_filename.replace(".fast5", "")}-{f5_sha256}.fastq'
-        with open(fq_path, 'w') as fout:
+        fq_filename = f'{f5_filename.replace(".fast5", "")}-{f5_sha256}.fastq'
+        tmp_fq_path = Path(tmpdir) / fq_filename
+        with open(tmp_fq_path, 'w') as fout:
             async for x in basecall_fast5(f5_file,
                                           config=app.config.GUPPY_CONFIG,
                                           port=app.config.GUPPY_PORT,
                                           host=app.config.GUPPY_HOST):
                 fout.write(x)
+        final_fq_path = base_outdir / fq_filename
+        # move FASTQ to final destination
+        tmp_fq_path.replace(final_fq_path)
 
     return json({"basecalled": True,
-                 'fastq': str(fq_path),
-                 'fastq_filesize': fq_path.lstat().st_size})
+                 'fastq': str(final_fq_path),
+                 'fastq_filesize': final_fq_path.lstat().st_size})
 
 
 if __name__ == "__main__":

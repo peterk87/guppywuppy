@@ -79,7 +79,7 @@ def sha256_binary_file(path, buffer=1024 ** 2) -> str:
 
 async def get_f5_data(f5id: int, host: str = 'localhost', port: int = 3000):
     uri = f'http://{host}:{port}/api/fast5/{f5id}'
-    resp = await httpx.get(uri)
+    resp = await httpx.get(uri, timeout=None)
     f5_data = resp.json().get('data', {})
     return f5_data
 
